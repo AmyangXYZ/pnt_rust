@@ -2,9 +2,11 @@ use chrono::{DateTime, TimeZone, Utc};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
-pub const OMEGA_EARTH: f64 = 7.2921151467e-5; // WGS-84 earth rotation rate, rad/s
+pub const OMEGA_E_DOT: f64 = 7.2921151467e-5; // WGS-84 earth rotation rate, rad/s
+pub const MU_EARTH: f64 = 398600.5e9; // Earth's gravitational constant
 pub const C_LIGHT: f64 = 299792458.0; // Speed of light, m/s
 
+#[derive(Debug, PartialEq, Default, Clone, Copy)]
 pub struct ECEF {
     pub x: f64,
     pub y: f64,
@@ -61,18 +63,19 @@ impl State {
     }
 }
 
-/// Calculate GPS time: seconds since GPS epoch (Jan 6, 1980) plus leap seconds
-pub fn calculate_gps_time(time: std::time::SystemTime) -> i64 {
+/// Calculate GPS time: milliseconds since GPS epoch (Jan 6, 1980) plus leap seconds
+pub fn calculate_gps_time(time: std::time::SystemTime) -> f64 {
     let utc_time: DateTime<Utc> = time.into();
     let gps_epoch: DateTime<Utc> = Utc.with_ymd_and_hms(1980, 1, 6, 0, 0, 0).unwrap();
-    let leap_seconds = 18; // As of 2024
-    (utc_time - gps_epoch).num_seconds() + leap_seconds
+    let leap_seconds = 18.0; // As of 2024
+    ((utc_time - gps_epoch).num_microseconds().unwrap() as f64 / 1e6 + leap_seconds) * 1000.0
 }
 
 #[derive(Debug, PartialEq, Default, Clone, Copy)]
 pub struct NavRecord {
     pub sat_id: u8,
     pub epoch: (i32, i32, i32, i32, i32, i32),
+    pub gps_millis: f64,
     pub sv_clock_bias: f64,
     pub sv_clock_drift: f64,
     pub sv_clock_drift_rate: f64,
@@ -130,6 +133,7 @@ impl RinexNav {
 
             let sat_id = line[1..3].trim().parse().unwrap_or(0);
             let epoch = Self::parse_epoch(&line[3..23]);
+            let gps_millis = Self::epoch_to_gps_millis(&epoch);
             let sv_clock_bias = Self::parse_float(&line[23..42]);
             let sv_clock_drift = Self::parse_float(&line[42..61]);
             let sv_clock_drift_rate = Self::parse_float(&line[61..80]);
@@ -137,6 +141,7 @@ impl RinexNav {
             let mut record = NavRecord {
                 sat_id,
                 epoch,
+                gps_millis,
                 sv_clock_bias,
                 sv_clock_drift,
                 sv_clock_drift_rate,
@@ -168,15 +173,29 @@ impl RinexNav {
         )
     }
 
+    fn epoch_to_gps_millis(epoch: &(i32, i32, i32, i32, i32, i32)) -> f64 {
+        let utc_time = Utc
+            .with_ymd_and_hms(
+                epoch.0,
+                epoch.1 as u32,
+                epoch.2 as u32,
+                epoch.3 as u32,
+                epoch.4 as u32,
+                epoch.5 as u32,
+            )
+            .unwrap();
+        calculate_gps_time(utc_time.into())
+    }
+
     fn parse_float(s: &str) -> f64 {
         s.trim().replace('D', "E").parse().unwrap_or(0.0)
     }
 
     fn parse_data_line(record: &mut NavRecord, line: &str, line_number: usize) {
-        let values: Vec<f64> = line[3..]
+        let values: Vec<f64> = line[4..]
             .chars()
             .collect::<Vec<char>>()
-            .chunks(20)
+            .chunks(19)
             .take(4)
             .map(|chunk| {
                 chunk

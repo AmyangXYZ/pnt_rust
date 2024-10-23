@@ -1,10 +1,10 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use pnt_rust::{gnss::RinexNav, satellite::Satellite};
 
 fn main() {
     let sat_id: u8 = 17;
     let mut satellite = Satellite::new(sat_id, String::from("ISS"));
-    let start = std::time::SystemTime::now();
+    let start = Utc.with_ymd_and_hms(2023, 6, 12, 0, 0, 48).unwrap();
 
     let duration = std::time::Duration::from_secs(1);
     let step = std::time::Duration::from_millis(1);
@@ -17,7 +17,6 @@ fn main() {
         .into_iter()
         .filter(|record| record.sat_id == sat_id)
         .collect();
-
     println!("Total records: {}", nav_data.records.len());
     println!("Filtered records for {}: {}", sat_id, ephemeris_data.len());
 
